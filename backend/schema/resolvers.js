@@ -26,15 +26,39 @@ const resolvers = {
       return await Equipment.find(query);
     },
     
-    // Request queries
     getRequest: async (_, { requestId }) => {
-      return await Request.findOne({ requestId });
+      const request = await Request.findOne({ requestId });
+      if (!request) return null;
+      const student = await User.findOne({ userId: request.studentId });
+      const equipment = await Equipment.findOne({ equipmentId: request.equipmentId });
+      return {
+        ...request._doc,
+        student: student || null,
+        equipment: equipment || null,
+      }
     },
+    
     getUserRequests: async (_, { userId, status }) => {
       const query = { studentId: userId };
       if (status) query.status = status;
-      return await Request.find(query);
+    
+      const requests = await Request.find(query);
+      if (!requests.length) return [];
+    
+      return await Promise.all(
+        requests.map(async (request) => {
+          const student = await User.findOne({ userId: request.studentId });
+          const equipment = await Equipment.findOne({ equipmentId: request.equipmentId });
+    
+          return {
+            ...request._doc,
+            student: student || null,
+            equipment: equipment || null,
+          };
+        })
+      );
     },
+    
     getDepartmentRequests: async (_, { department, status }, { neo4jDriver }) => {
       const session = neo4jDriver.session();
       try {
@@ -282,61 +306,85 @@ const resolvers = {
           session.close();
         }
       },
-      approveRequest: async (_, { requestId, hodId, comments }, { neo4jDriver }) => {
-        console.log("Approving request:", requestId, "by HOD:", hodId);
-    
-        // Verify HOD exists
-        const hod = await User.findOne({ userId: hodId, role: 'HOD' });
-        console.log("HOD found:", hod);
-        if (!hod) throw new Error('HOD not found or user is not an HOD');
-    
-        // Get the request
-        const request = await Request.findOne({ requestId });
-        console.log("Request found:", request);
-        if (!request) throw new Error('Request not found');
-        
-        // Check if request status is PENDING
-        if (request.status !== 'PENDING') {
-          console.log("Request status:", request.status);
-          throw new Error('Request is not in PENDING status');
-        }
-    
-        // Verify department match
-        const equipment = await Equipment.findOne({ equipmentId: request.equipmentId });
-        console.log("Equipment found:", equipment);
-        if (!equipment || hod.department !== equipment.department) {
-          throw new Error('HOD does not belong to the equipment department');
-        }
-    
-        const session = neo4jDriver.session();
-        try {
-            // Approve request in Neo4j
-            await neo4jQueries.approveRequest(session, requestId, hodId);
-            
-            // Update equipment status
-            await Equipment.findOneAndUpdate(
-              { equipmentId: request.equipmentId },
-              { $set: { status: 'IN_USE' } }
-            );
-    
-            // Update request in MongoDB
-            return await Request.findOneAndUpdate(
-              { requestId },
-              { 
-                $set: { 
+approveRequest: async (_, { requestId, hodId, comments }, { neo4jDriver }) => {
+  console.log("Approving request:", requestId, "by HOD:", hodId);
+
+  // Verify HOD exists
+  const hod = await User.findOne({ userId: hodId, role: 'HOD' });
+  console.log("HOD found:", hod);
+  if (!hod) throw new Error('HOD not found or user is not an HOD');
+
+  // Get the request
+  const request = await Request.findOne({ requestId });
+  console.log("Request found:", request);
+  if (!request) throw new Error('Request not found');
+
+  // Check if request status is PENDING
+  if (request.status !== 'PENDING') {
+      console.log("Request status:", request.status);
+      throw new Error('Request is not in PENDING status');
+  }
+
+  // Verify department match
+  const equipment = await Equipment.findOne({ equipmentId: request.equipmentId });
+  console.log("Equipment found:", equipment);
+  if (!equipment || hod.department !== equipment.department) {
+      throw new Error('HOD does not belong to the equipment department');
+  }
+
+  const session = neo4jDriver.session();
+  try {
+      // Approve request in Neo4j
+      const neo4jResult = await neo4jQueries.approveRequest(session, requestId, hodId);
+
+      // Check if request was correctly updated in Neo4j
+      if (!neo4jResult.records.length) {
+          throw new Error("⚠️ Neo4j update failed: No records returned.");
+      }
+      // Update equipment status
+      const updatedEquipment = await Equipment.findOneAndUpdate(
+          { equipmentId: request.equipmentId },
+          { $set: { status: 'IN_USE' } },
+          { new: true }
+      );
+
+      if (!updatedEquipment) {
+          throw new Error("⚠️ Equipment update failed: Equipment not found.");
+      }
+      // Update request in MongoDB
+      const updatedRequest = await Request.findOneAndUpdate(
+          { requestId },
+          { 
+              $set: { 
                   status: 'APPROVED',
                   approvedBy: hodId,
                   approvalDate: new Date(),
                   comments: comments || ''
-                } 
-              },
-              { new: true }
-            );
-        } finally {
-            session.close();
-        }
-    
-      },
+              } 
+          },
+          { new: true }
+      );
+
+      if (!updatedRequest) {
+          throw new Error("Request update failed: Request not found.");
+      }
+      // Fetch the full User details for approvedBy
+      const hodDetails = await User.findOne({ userId: hodId });
+      if (!hodDetails) throw new Error(" HOD details not found after approval!");
+      // Modify the return object to include the full user details
+      return {
+          ...updatedRequest.toObject(),  // Convert Mongoose object to plain JSON
+          approvedBy: hodDetails         // Attach full User object
+      };
+
+  } catch (error) {
+      console.error("Error in approveRequest:", error);
+      throw error; // Rethrow the error to GraphQL
+  } finally {
+      session.close();
+  }
+}
+,
       rejectRequest: async (_, { requestId, hodId, comments }, { neo4jDriver }) => {
         // Verify HOD exists
         const hod = await User.findOne({ userId: hodId, role: 'HOD' });
@@ -366,13 +414,13 @@ const resolvers = {
           // Reject request in Neo4j
           await session.run(
             `MATCH (s:User)-[r:REQUESTED {requestId: $requestId}]->(e:Equipment)
-             MATCH (h:User {userId: $hodId})
-             SET r.status = "REJECTED",
-                 r.approvedBy = $hodId,
-                 r.approvalDate = datetime(),
-                 r.comments = $comments
-             CREATE (h)-[:REJECTED {date: datetime(), reason: $comments}]->(r)
-             RETURN s, r, e, h`,
+            MATCH (h:User {userId: $hodId})
+            CREATE (h)-[:REJECTED {date: datetime(), reason: $comments}]->(e)  // Attach to Equipment instead of r
+            SET r.status = "REJECTED",
+            r.approvedBy = $hodId,
+            r.approvalDate = datetime(),
+            r.comments = $comments
+            RETURN s, r, e, h`,
             { requestId, hodId, comments }
           );
           

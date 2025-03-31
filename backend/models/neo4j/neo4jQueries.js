@@ -75,16 +75,15 @@ const createUser = (session, user) => {
   
   const approveRequest = (session, requestId, hodId) => {
     return session.run(
-      `MATCH (s:User)-[:REQUESTED]->(r:Request {requestId: $requestId})-[:REQUEST_FOR]->(e:Equipment)
-MATCH (h:User {userId: $hodId})
-SET r.status = "APPROVED",
-    r.approvedBy = $hodId,
-    r.approvalDate = datetime()
-CREATE (h)-[:APPROVED {date: datetime()}]->(r)
-RETURN s, r, e, h`,
+      `MATCH (s:User)-[r:REQUESTED {requestId: $requestId}]->(e:Equipment)
+       MATCH (h:User {userId: $hodId})
+       SET r.status = "APPROVED",
+           r.approvalDate = datetime(),
+           r.approvedBy = $hodId
+       RETURN s, r, e, h`,
       { requestId, hodId }
     );
-  };
+};
   
   const completeRequest = (session, requestId) => {
     return session.run(
