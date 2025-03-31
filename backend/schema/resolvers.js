@@ -67,19 +67,49 @@ const resolvers = {
           ${status ? 'WHERE r.status = $status' : ''}
           RETURN r.requestId AS requestId
         `;
-        
+    
         const result = await session.run(query, { department, status });
         const requestIds = result.records.map(record => record.get('requestId'));
-        
-        return await Request.find({ requestId: { $in: requestIds } });
+    
+        if (requestIds.length === 0) return [];
+    
+        const requests = await Request.find({ requestId: { $in: requestIds } });
+    
+        return await Promise.all(
+          requests.map(async (request) => {
+            const student = await User.findOne({ userId: request.studentId });
+            const equipment = await Equipment.findOne({ equipmentId: request.equipmentId });
+    
+            return {
+              ...request._doc,
+              student: student || null,
+              equipment: equipment || null,
+            };
+          })
+        );
       } finally {
         session.close();
       }
-    },
+    },    
     getEquipmentRequests: async (_, { equipmentId, status }) => {
       const query = { equipmentId };
       if (status) query.status = status;
-      return await Request.find(query);
+    
+      const requests = await Request.find(query);
+      if (!requests.length) return [];
+    
+      return await Promise.all(
+        requests.map(async (request) => {
+          const student = await User.findOne({ userId: request.studentId });
+          const equipment = await Equipment.findOne({ equipmentId: request.equipmentId });
+    
+          return {
+            ...request._doc,
+            student: student || null,
+            equipment: equipment || null,
+          };
+        })
+      );
     },
     
     // Department queries
@@ -87,22 +117,23 @@ const resolvers = {
       const session = neo4jDriver.session();
       try {
         const result = await session.run(
-          `MATCH (d:Department {name: $name})
-           OPTIONAL MATCH (d)<-[:BELONGS_TO]-(hod:User {role: "HOD"})
-           RETURN d, hod`,
+          `MATCH (u:User) WHERE u.department = $name
+           RETURN DISTINCT u.department AS departmentName`,
           { name }
         );
-        
+    
         if (result.records.length === 0) {
           return null;
         }
-        
-        const departmentNode = result.records[0].get('d').properties;
-        const hodNode = result.records[0].get('hod');
-        
+    
+        const departmentName = result.records[0].get('departmentName');
+    
+        // Find the HOD for this department
+        const hod = await User.findOne({ department: departmentName, role: "HOD" });
+    
         return {
-          ...departmentNode,
-          hod: hodNode ? await User.findOne({ userId: hodNode.properties.userId }) : null
+          name: departmentName,
+          hod: hod || null, // Return null if no HOD exists
         };
       } finally {
         session.close();
@@ -112,15 +143,28 @@ const resolvers = {
       const session = neo4jDriver.session();
       try {
         const result = await session.run(
-          `MATCH (d:Department)
-           RETURN d`
+          `MATCH (u:User) WHERE u.department IS NOT NULL
+           RETURN DISTINCT u.department AS departmentName`
         );
-        
-        return result.records.map(record => record.get('d').properties);
+    
+        return await Promise.all(
+          result.records.map(async (record) => {
+            const departmentName = record.get('departmentName');
+    
+            // Find the HOD for this department
+            const hod = await User.findOne({ department: departmentName, role: "HOD" });
+    
+            return {
+              name: departmentName,
+              hod: hod || null, // Return null if no HOD exists
+            };
+          })
+        );
       } finally {
         session.close();
       }
-    }
+    },
+    
   },
   Mutation: {
     // User mutations
