@@ -1,6 +1,42 @@
 const { gql } = require('apollo-server-express');
 
 const typeDefs = gql`
+type Event {
+    eventId: ID!
+    eventName: String!
+    description: String!
+    date: String!
+    location: String!
+    status: String!
+    createdBy: User!
+    approvedBy: User
+    createdDate: String!
+    comments: String
+  }
+
+  type EventRequest {
+    requestId: ID!
+    event: Event!
+    student: User!
+    status: String!
+    requestDate: String!
+    comments: String
+  }
+  extend type Query {
+    getEvent(eventId: ID!): Event
+    getAllEvents: [Event]
+    getEventRequests(eventId: ID!, status: String): [EventRequest]
+    getUserEventRequests(userId: ID!, status: String): [EventRequest]
+  }
+
+  extend type Mutation {
+    createEvent(eventName: String!, description: String!, date: String!, location: String!, createdBy: ID!): Event
+    updateEventStatus(eventId: ID!, status: String!, hodId: ID!, comments: String): Event
+    createEventRequest(eventId: ID!, studentId: ID!, comments: String): EventRequest
+    approveEventRequest(requestId: ID!, hodId: ID!, comments: String): EventRequest
+    rejectEventRequest(requestId: ID!, hodId: ID!, comments: String): EventRequest
+    deleteEvent(eventId: ID!): Event
+  }
   type User {
     userId: ID!
     name: String!
