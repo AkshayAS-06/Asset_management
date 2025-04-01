@@ -10,7 +10,12 @@ const createUser = (session, user) => {
       user
     );
   };
-  
+  const deleteUser = async (session, userId) => {
+    return session.run(
+      `MATCH (u:User { userId: $userId }) DETACH DELETE u`,
+      { userId }
+    );
+  };  
   const createEquipment = (session, equipment) => {
     return session.run(
       `CREATE (e:Equipment {
@@ -22,6 +27,13 @@ const createUser = (session, user) => {
         status: $status
       }) RETURN e`,
       equipment
+    );
+  };
+
+  const deleteEquipment = async (session, equipmentId) => {
+    return session.run(
+      `MATCH (e:Equipment { equipmentId: $equipmentId }) DETACH DELETE e`,
+      { equipmentId }
     );
   };
   
@@ -98,6 +110,8 @@ const createUser = (session, user) => {
   
   module.exports = {
     createUser,
+    deleteUser,
+    deleteEquipment,
     createEquipment,
     createDepartment,
     connectUserToDepartment,
