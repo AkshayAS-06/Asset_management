@@ -1,8 +1,10 @@
-const User = require('../models/mongodb/User');
-const Equipment = require('../models/mongodb/Equipment');
-const Request = require('../models/mongodb/Request');
-const { v4: uuidv4 } = require('uuid');
-const neo4jQueries = require('../models/neo4j/neo4jQueries');
+const User = require("../models/mongodb/User");
+const Equipment = require("../models/mongodb/Equipment");
+const Request = require("../models/mongodb/Request");
+const Event = require("../models/mongodb/Event");
+const EventRequest = require("../models/mongodb/EventRequest");
+const { v4: uuidv4 } = require("uuid");
+const neo4jQueries = require("../models/neo4j/neo4jQueries");
 
 const resolvers = {
   Query: {
@@ -465,14 +467,18 @@ const resolvers = {
       const userId = uuidv4();
       const user = new User({
         userId,
-        ...args
+        ...args,
       });
-      
+
       const session = neo4jDriver.session();
       try {
         await neo4jQueries.createUser(session, { userId, ...args });
-        await neo4jQueries.connectUserToDepartment(session, userId, args.department);
-        
+        await neo4jQueries.connectUserToDepartment(
+          session,
+          userId,
+          args.department
+        );
+
         return await user.save();
       } finally {
         session.close();
@@ -868,7 +874,6 @@ const resolvers = {
       if (!request) {
         throw new Error("Request not found or cannot be cancelled");
       }
-
       const session = neo4jDriver.session();
       try {
         // Cancel request in Neo4j
@@ -876,28 +881,27 @@ const resolvers = {
           `MATCH (s:User)-[r:REQUESTED {requestId: $requestId}]->(e:Equipment)
              SET r.status = "CANCELLED"
              RETURN s, r, e`,
-            { requestId }
+          { requestId }
+        );
+
+        // If the request was approved, update equipment status back to AVAILABLE
+        if (request.status === "APPROVED") {
+          await Equipment.findOneAndUpdate(
+            { equipmentId: request.equipmentId },
+            { $set: { status: "AVAILABLE" } }
           );
-          
-          // If the request was approved, update equipment status back to AVAILABLE
-          if (request.status === 'APPROVED') {
-            await Equipment.findOneAndUpdate(
-              { equipmentId: request.equipmentId },
-              { $set: { status: 'AVAILABLE' } }
-            );
-          }
-          
-          // Update request in MongoDB
-          return await Request.findOneAndUpdate(
-            { requestId },
-            { $set: { status: 'CANCELLED' } },
-            { new: true }
-          );
-        } finally {
-          session.close();
         }
+
+        // Update request in MongoDB
+        return await Request.findOneAndUpdate(
+          { requestId },
+          { $set: { status: "CANCELLED" } },
+          { new: true }
+        );
+      } finally {
+        session.close();
       }
-    }
-  };
-  
-  module.exports = resolvers;
+    },
+};
+
+module.exports = resolvers;
