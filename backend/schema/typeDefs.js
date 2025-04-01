@@ -10,6 +10,10 @@ const typeDefs = gql`
     createdAt: String
     requests: [Request]
   }
+  type AuthPayload {
+    token: String!
+    user: User!
+  }
 
   enum UserRole {
     STUDENT
@@ -83,12 +87,27 @@ const typeDefs = gql`
 
   type Mutation {
     # User mutations
+    deleteUser(
+    userId: ID!
+    ): Boolean!
+
     createUser(
       name: String!
       email: String!
+      password: String!
       role: UserRole!
       department: String!
-    ): User
+    ): AuthPayload
+
+    loginUser(
+    email: String!, 
+    password: String!
+    ): AuthPayload!
+
+    login(
+    email: String!,
+    password: String!,
+    ): AuthPayload
     updateUser(
       userId: ID!
       name: String
@@ -108,6 +127,11 @@ const typeDefs = gql`
       value: Float
       location: String
     ): Equipment
+
+    deleteEquipment(
+    equipmentId: ID!
+    ): Boolean
+
     updateEquipment(
       equipmentId: ID!
       name: String

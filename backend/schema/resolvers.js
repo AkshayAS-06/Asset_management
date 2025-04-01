@@ -3,6 +3,10 @@ const Equipment = require('../models/mongodb/Equipment');
 const Request = require('../models/mongodb/Request');
 const { v4: uuidv4 } = require('uuid');
 const neo4jQueries = require('../models/neo4j/neo4jQueries');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const SECRET_KEY = 'your_secret_key';
+const mongoose = require('mongoose');
 
 const resolvers = {
   Query: {
@@ -168,21 +172,81 @@ const resolvers = {
   },
   Mutation: {
     // User mutations
-    createUser: async (_, args, { neo4jDriver }) => {
-      const userId = uuidv4();
-      const user = new User({
-        userId,
-        ...args
-      });
-      
-      const session = neo4jDriver.session();
+    createUser: async (_, { name, email, password, role, department }, { neo4jDriver }) => {
       try {
-        await neo4jQueries.createUser(session, { userId, ...args });
-        await neo4jQueries.connectUserToDepartment(session, userId, args.department);
-        
-        return await user.save();
-      } finally {
-        session.close();
+        // Check if user already exists
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+          throw new Error("User already exists.");
+        }
+    
+        // Generate unique userId
+        const userId = uuidv4();
+    
+        // Hash password before saving
+        const hashedPassword = await bcrypt.hash(password, 10);
+    
+        // Create new user in MongoDB
+        const newUser = new User({
+          userId,
+          name,
+          email,
+          password: hashedPassword,
+          role,
+          department,
+          createdAt: new Date(),
+        });
+    
+        await newUser.save();
+    
+        // Create a new Neo4j session
+        const session = neo4jDriver.session();
+        try {
+          // Store user in Neo4j
+          await neo4jQueries.createUser(session, { userId, name, email, role, department });
+    
+          // Connect user to department in Neo4j
+          await neo4jQueries.connectUserToDepartment(session, userId, department);
+        } finally {
+          await session.close();
+        }
+    
+        // Generate JWT Token
+        const token = jwt.sign(
+          { userId, email, role },
+          SECRET_KEY,
+          { expiresIn: "1h" }
+        );
+    
+        return { user: newUser, token };
+      } catch (error) {
+        throw new Error(error.message);
+      }
+    },
+    
+    deleteUser: async (_, { userId }, { neo4jDriver }) => {
+      try {
+        // Find the user by ID in MongoDB
+        const user = await User.findOne({ userId });
+        if (!user) {
+          throw new Error("User not found.");
+        }
+    
+        // Delete user from MongoDB
+        await User.deleteOne({ userId });
+    
+        // Create a new Neo4j session
+        const session = neo4jDriver.session();
+        try {
+          // Delete user node from Neo4j
+          await neo4jQueries.deleteUser(session, userId);
+        } finally {
+          await session.close();
+        }
+    
+        return true; // Successfully deleted
+      } catch (error) {
+        throw new Error(error.message);
       }
     },
     updateUser: async (_, args, { neo4jDriver }) => {
@@ -232,6 +296,31 @@ const resolvers = {
         return await equipment.save();
       } finally {
         session.close();
+      }
+    },
+    deleteEquipment: async (_, { equipmentId }, { neo4jDriver }) => {
+      try {
+        // Find the equipment in MongoDB
+        const equipment = await Equipment.findOne({ equipmentId });
+        if (!equipment) {
+          throw new Error("Equipment not found.");
+        }
+    
+        // Delete from MongoDB
+        await Equipment.deleteOne({ equipmentId });
+    
+        // Delete from Neo4j
+        const session = neo4jDriver.session();
+        try {
+          await neo4jQueries.deleteEquipment(session, equipmentId);
+        } finally {
+          await session.close();
+        }
+    
+        return true; // Successfully deleted
+      } catch (error) {
+        console.error("Error in deleteEquipment:", error.message);
+        throw new Error(error.message);
       }
     },
     updateEquipment: async (_, args, { neo4jDriver }) => {
@@ -556,7 +645,36 @@ approveRequest: async (_, { requestId, hodId, comments }, { neo4jDriver }) => {
         } finally {
           session.close();
         }
-      }
+      },
+      loginUser: async (_, { email, password }) => {
+        try {
+          // Find user by email
+          const user = await User.findOne({ email });
+          if (!user) {
+            throw new Error("User not found.");
+          }
+          
+          const isMatch = await bcrypt.compare(password, user.password);
+          
+          if (!isMatch) {
+            throw new Error("Invalid credentials.");
+          }
+          
+          // Generate JWT Token
+          const token = jwt.sign(
+            { userId: user.userId, email: user.email, role: user.role },
+            SECRET_KEY,
+            { expiresIn: "1h" }
+          );
+          
+          // Make sure you're returning both user and token here
+          return { user, token };
+        } catch (error) {
+          // Instead of just re-throwing, you need to handle the error
+          // and still return something or ensure the error is properly handled by Apollo
+          throw new Error(error.message);
+        }
+      },
     }
   };
   
