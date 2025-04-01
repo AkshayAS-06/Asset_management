@@ -1,10 +1,8 @@
-const User = require("../models/mongodb/User");
-const Equipment = require("../models/mongodb/Equipment");
-const Request = require("../models/mongodb/Request");
-const Event = require("../models/mongodb/Event");
-const EventRequest = require("../models/mongodb/EventRequest");
-const { v4: uuidv4 } = require("uuid");
-const neo4jQueries = require("../models/neo4j/neo4jQueries");
+const User = require('../models/mongodb/User');
+const Equipment = require('../models/mongodb/Equipment');
+const Request = require('../models/mongodb/Request');
+const { v4: uuidv4 } = require('uuid');
+const neo4jQueries = require('../models/neo4j/neo4jQueries');
 
 const resolvers = {
   Query: {
@@ -467,18 +465,14 @@ const resolvers = {
       const userId = uuidv4();
       const user = new User({
         userId,
-        ...args,
+        ...args
       });
-
+      
       const session = neo4jDriver.session();
       try {
         await neo4jQueries.createUser(session, { userId, ...args });
-        await neo4jQueries.connectUserToDepartment(
-          session,
-          userId,
-          args.department
-        );
-
+        await neo4jQueries.connectUserToDepartment(session, userId, args.department);
+        
         return await user.save();
       } finally {
         session.close();
@@ -535,6 +529,31 @@ const resolvers = {
         return await equipment.save();
       } finally {
         session.close();
+      }
+    },
+    deleteEquipment: async (_, { equipmentId }, { neo4jDriver }) => {
+      try {
+        // Find the equipment in MongoDB
+        const equipment = await Equipment.findOne({ equipmentId });
+        if (!equipment) {
+          throw new Error("Equipment not found.");
+        }
+    
+        // Delete from MongoDB
+        await Equipment.deleteOne({ equipmentId });
+    
+        // Delete from Neo4j
+        const session = neo4jDriver.session();
+        try {
+          await neo4jQueries.deleteEquipment(session, equipmentId);
+        } finally {
+          await session.close();
+        }
+    
+        return true; // Successfully deleted
+      } catch (error) {
+        console.error("Error in deleteEquipment:", error.message);
+        throw new Error(error.message);
       }
     },
     updateEquipment: async (_, args, { neo4jDriver }) => {
@@ -857,27 +876,28 @@ const resolvers = {
           `MATCH (s:User)-[r:REQUESTED {requestId: $requestId}]->(e:Equipment)
              SET r.status = "CANCELLED"
              RETURN s, r, e`,
-          { requestId }
-        );
-
-        // If the request was approved, update equipment status back to AVAILABLE
-        if (request.status === "APPROVED") {
-          await Equipment.findOneAndUpdate(
-            { equipmentId: request.equipmentId },
-            { $set: { status: "AVAILABLE" } }
+            { requestId }
           );
+          
+          // If the request was approved, update equipment status back to AVAILABLE
+          if (request.status === 'APPROVED') {
+            await Equipment.findOneAndUpdate(
+              { equipmentId: request.equipmentId },
+              { $set: { status: 'AVAILABLE' } }
+            );
+          }
+          
+          // Update request in MongoDB
+          return await Request.findOneAndUpdate(
+            { requestId },
+            { $set: { status: 'CANCELLED' } },
+            { new: true }
+          );
+        } finally {
+          session.close();
         }
-
-        // Update request in MongoDB
-        return await Request.findOneAndUpdate(
-          { requestId },
-          { $set: { status: "CANCELLED" } },
-          { new: true }
-        );
-      } finally {
-        session.close();
       }
-    },
-};
-
-module.exports = resolvers;
+    }
+  };
+  
+  module.exports = resolvers;

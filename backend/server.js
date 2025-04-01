@@ -5,6 +5,7 @@ const neo4j = require('neo4j-driver');
 const typeDefs = require('./schema/typeDefs');
 const resolvers = require('./schema/resolvers');
 const { mongoURI, neo4jURI, neo4jUser, neo4jPassword } = require('./config/db.js');
+const { authenticate } = require('./middlewares/authMiddleware');
 
 // Initialize Express
 const app = express();
@@ -42,10 +43,10 @@ testNeo4jConnection();
 const server = new ApolloServer({
   typeDefs,
   resolvers,
-  context: ({ req }) => ({
-    req,
-    neo4jDriver: driver
-  })
+  context: ({ req }) => {
+    const user = authenticate(req); // Authenticate and get the user data
+    return { req, user, neo4jDriver: driver }; // Return context with user and driver
+  }
 });
 
 // Apply Apollo GraphQL middleware
