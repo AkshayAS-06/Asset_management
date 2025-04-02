@@ -107,7 +107,63 @@ const createUser = (session, user) => {
       { requestId }
     );
   };
-  
+  const createEvent = (session, eventData) => {
+    return session.run(
+      `CREATE (e:Event {
+          eventId: $eventId,
+          eventName: $eventName,
+          description: $description,
+          date: $date,
+          location: $location,
+          status: "Pending",
+          createdBy: $createdBy,
+          comments: $comments
+        })
+        RETURN e`,
+      {
+        eventId: eventData.eventId,
+        eventName: eventData.eventName,
+        description: eventData.description,
+        date: eventData.date,
+        location: eventData.location,
+        createdBy: eventData.createdBy,
+        comments: eventData.comments,
+      }
+    );
+  };
+  const deleteEvent = (session, eventId) => {
+    return session.run(
+      `MATCH (e:Event {eventId: $eventId})
+       DELETE e
+       RETURN e`,
+      { eventId }
+    );
+  };
+  const createEventRequest = (session, request) => {
+    return session.run(
+      `MATCH (s:User {userId: $studentId})
+       MATCH (e:Event {eventId: $eventId})
+       CREATE (s)-[r:REQUESTED {
+         requestId: $requestId,
+         status: $status,
+         requestDate: $requestDate,
+         comments: $comments
+       }]->(e)
+       RETURN s, r, e`,
+      request
+    );
+  };
+  const approveEventRequest = (session, requestId, hodId) => {
+    return session.run(
+      `MATCH (s:User)-[r:REQUESTED {requestId: $requestId}]->(e:Event)
+       MATCH (h:User {userId: $hodId})
+       SET r.status = "APPROVED",
+           r.approvalDate = datetime(),
+           r.approvedBy = $hodId
+       RETURN s, r, e, h`,
+      { requestId, hodId }
+    );
+  };
   module.exports = {
     createUser,
     deleteUser,
@@ -118,5 +174,9 @@ const createUser = (session, user) => {
     connectEquipmentToDepartment,
     createRequest,
     approveRequest,
-    completeRequest
+    completeRequest,
+    createEvent,
+    deleteEvent,
+    createEventRequest,
+    approveEventRequest,  
   };

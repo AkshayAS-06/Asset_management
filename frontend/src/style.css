@@ -1,0 +1,15 @@
+.container {
+  text-align: center;
+  font-family: Arial, sans-serif;
+  padding: 20px;
+}
+.header {
+  background: #282c34;
+  color: white;
+  padding: 10px;
+}
+.footer {
+  margin-top: 20px;
+  padding: 10px;
+  background: #ddd;
+}

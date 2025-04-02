@@ -330,36 +330,50 @@ const resolvers = {
       if (!event) {
         throw new Error("Event not found");
       }
-
+    
       // Verify that the student exists
       const student = await User.findOne({ userId: studentId });
       if (!student) {
         throw new Error("Student not found");
       }
-
+    
+      // Generate requestId
       const requestId = uuidv4();
+    
+      // Set the status and requestDate (e.g., "Pending" and the current date)
+      const status = "Pending"; // You can update this based on your logic
+      const requestDate = new Date().toISOString(); // Format as string, e.g., ISO 8601
+    
+      // Create the EventRequest object
       const eventRequest = new EventRequest({
         requestId,
         eventId,
         studentId,
+        status,
+        requestDate,
         comments,
       });
-
+    
+      // Save to MongoDB
+      const savedRequest = await eventRequest.save();
+    
       const session = neo4jDriver.session();
       try {
+        // Create EventRequest in Neo4j
         await neo4jQueries.createEventRequest(session, {
           requestId,
           eventId,
           studentId,
+          status,
+          requestDate,
           comments,
         });
-        const savedRequest = await eventRequest.save();
-
+    
         // Return the eventRequest with the event and student details
         return {
           ...savedRequest.toObject(),
-          event: event,
-          student: student,
+          event,
+          student,
         };
       } finally {
         session.close();
@@ -446,22 +460,39 @@ const resolvers = {
       }
     },
     deleteEvent: async (_, { eventId }, { neo4jDriver }) => {
-      // Verify that the event exists
-      const event = await Event.findOne({ eventId });
-      if (!event) {
-        throw new Error('Event not found');
-      }
-
-      // Delete the event from MongoDB
-      await Event.deleteOne({ eventId });
-
-      const session = neo4jDriver.session();
       try {
-        // Delete the event from Neo4j
-        await neo4jQueries.deleteEvent(session, eventId);
-        return { success: true, message: "Event deleted successfully" };
-      } finally {
-        session.close();
+        // Verify that the event exists in MongoDB by matching the eventId (ensuring it is a string)
+        const event = await Event.findOne({ eventId: String(eventId) }); // Explicitly cast eventId to string    
+        if (!event) {
+          throw new Error('Event not found in MongoDB');
+        }
+    
+        // Delete the event from MongoDB
+        await Event.deleteOne({ eventId: String(eventId) });
+    
+        // Proceed with deletion in Neo4j
+        const session = neo4jDriver.session();
+        try {
+    
+          // Delete the event from Neo4j
+          const result = await neo4jQueries.deleteEvent(session, eventId);
+    
+          // Check if deletion was successful in Neo4j
+          if (result && result.records && result.records.length > 0) {
+            return { success: true, message: 'Event deleted successfully', eventId: eventId };
+          } else {
+            console.error('Failed to delete event in Neo4j');
+            throw new Error('Failed to delete event in Neo4j');
+          }
+        } catch (error) {
+          console.error('Error deleting event from Neo4j:', error);
+          throw new Error('Error deleting event from Neo4j: ' + error.message);
+        } finally {
+          session.close();
+        }
+      } catch (error) {
+        console.error('Error in deleteEvent mutation:', error);
+        throw new Error(error.message);
       }
     },
     // User mutations
